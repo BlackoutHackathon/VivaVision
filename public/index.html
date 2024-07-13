@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dual Maps</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <style>
+      body {
+        margin: 0;
+      }
+      #map-container {
+        display: flex;
+        height: 100vh;
+      }
+      .map {
+        flex: 1;
+        height: 100%;
+        margin: 5px; /* Adiciona margem aos mapas */
+      }
+      .map-title {
+        text-align: center;
+        font-weight: bold;
+        margin-bottom: 10px; /* Margem inferior para título */
+      }
+    </style>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  </head>
+  <body>
+    <div id="map-container">
+      <div class="map" id="clients-map">
+      </div>
+    </div>
+
+    <script>
+      const socket = io();
+
+      // Inicializa os mapas com uma região fixa para facilitar a marcação
+      const initialLatLng = [51.505, -0.09]; // Latitude e longitude iniciais para o centro dos mapas
+      const zoomLevel = 13; // Nível de zoom inicial
+
+      // Mapas
+      const clientsMap = L.map("clients-map").setView(initialLatLng, zoomLevel);
+
+
+      // Adiciona camadas de tile aos mapas
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "© OpenStreetMap contributors",
+      }).addTo(clientsMap);
+
+      // Função para centralizar o mapa na localização atual do usuário ao carregar a página
+      function centerMapToUserLocation() {
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            (position) => {
+              const { latitude, longitude } = position.coords;
+              console.log(
+                `Current location: Latitude: ${latitude}, Longitude: ${longitude}`
+              );
+
+              // Centraliza o mapa na localização do usuário
+              clientsMap.setView([latitude, longitude], zoomLevel);
+              
+
+              // Adiciona marcador nas coordenadas da localização atual com ícone personalizado
+              const userIcon = L.icon({
+                iconUrl:
+                  "data:image/png;base64,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", // Exemplo de ícone genérico
+                iconSize: [32, 32], // Tamanho do ícone
+                iconAnchor: [16, 32], // Ponto onde o ícone se conecta ao marcador (centralizado no pé)
+              });
+
+              const userMarker = L.marker([latitude, longitude], {
+                icon: userIcon,
+              }).addTo(clientsMap).bindPopup(`
+                            <div>
+                                <p>Sua Localização Atual</p>
+                                <button onclick="openVR()">Realidade Aumentada</button>
+                            </div>
+                        `);
+
+              // Faz a requisição HTTP usando axios
+              axios
+                .get("https://hackathon.vivacn.roxcode.io/api/stores/details")
+                .then((response) => {
+                  console.log(response.data);
+                })
+                .catch((error) => {
+                  console.error(`Erro ao fazer requisição: ${error.message}`);
+                });
+            },
+            (error) => {
+              console.error(`Erro ao obter a localização: ${error.message}`);
+            }
+          );
+        } else {
+          console.error("Geolocalização não suportada pelo navegador.");
+        }
+      }
+
+      // Função para abrir exemplo de realidade virtual
+      function openVR() {
+        window.open("/ar.html");
+      }
+
+      centerMapToUserLocation();
+    </script>
+  </body>
+</html>

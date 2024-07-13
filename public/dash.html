@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Interativo</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+            background-color: #f0f2f5;
+        }
+        header {
+            background-color: #007bff;
+            color: white;
+            padding: 15px;
+            text-align: center;
+            font-size: 1.5em;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            padding: 20px;
+            flex: 1;
+            overflow: auto;
+        }
+        .map-container {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            height: 500px;
+        }
+        .map-title {
+            text-align: center;
+            font-weight: bold;
+            padding: 10px;
+            background-color: #007bff;
+            color: white;
+            border-radius: 8px 8px 0 0;
+            margin: 0;
+        }
+        .map {
+            height: calc(100% - 40px);
+            border-radius: 0 0 8px 8px;
+        }
+        .info-panel {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            padding: 15px;
+            height: 500px;
+            overflow-y: auto;
+        }
+        .info-panel h3 {
+            margin-top: 0;
+            font-size: 1.2em;
+            color: #333;
+        }
+        .info-panel ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        .info-panel ul li {
+            margin-bottom: 10px;
+            padding: 10px;
+            background-color: #ffffff;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            display: flex;
+            justify-content: space-between;
+        }
+        .info-panel ul li:nth-child(odd) {
+            background-color: #f9f9f9;
+        }
+        @media (max-width: 768px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+            .map-container {
+                height: 300px;
+            }
+            .info-panel {
+                height: auto;
+            }
+        }
+    </style>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head>
+<body>
+    <header>
+        <h1>Dashboard Interativo</h1>
+    </header>
+    <div class="container">
+        <div class="map-container">
+            <div class="map-title">Clientes Conectados</div>
+            <div id="clients-map" class="map"></div>
+        </div>
+        <div class="map-container">
+            <div class="map-title">POIs e Caixas Clicáveis</div>
+            <div id="boxes-map" class="map"></div>
+        </div>
+        <div class="info-panel" id="clients-info">
+            <h3>Clientes Conectados</h3>
+            <ul id="clients-list">
+                <!-- Lista de clientes conectados será adicionada dinamicamente aqui -->
+            </ul>
+        </div>
+        <div class="info-panel" id="boxes-info">
+            <h3>POIs e Caixas</h3>
+            <ul id="boxes-list">
+                <!-- Lista de POIs e caixas será adicionada dinamicamente aqui -->
+            </ul>
+        </div>
+        <div class="info-panel" id="establishments-info">
+            <h3>Estabelecimentos Mais Visitados</h3>
+            <ul id="establishments-list">
+                <!-- Lista de estabelecimentos mais visitados será adicionada dinamicamente aqui -->
+            </ul>
+        </div>
+        <div class="info-panel" id="time-info">
+            <h3>Tempo de Permanência</h3>
+            <ul id="time-list">
+                <!-- Lista de tempo de permanência em pontos específicos será adicionada dinamicamente aqui -->
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        const socket = io('http://localhost:3000');
+
+        const initialLatLng = [51.505, -0.09];
+        const initialZoom = 13;
+
+        const clientsMap = L.map('clients-map').setView(initialLatLng, initialZoom);
+        const boxesMap = L.map('boxes-map').setView(initialLatLng, initialZoom);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(clientsMap);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(boxesMap);
+
+        const clientMarkers = {};
+        const boxMarkers = {};
+        const poiDetails = {};
+        const clientEntryTimes = {};
+
+        socket.on('location', (data) => {
+            const { id, latitude, longitude } = data;
+
+            if (!clientMarkers[id]) {
+                clientMarkers[id] = L.marker([latitude, longitude]).addTo(clientsMap)
+                    .bindPopup(`Client: ${id}`);
+            } else {
+                clientMarkers[id].setLatLng([latitude, longitude])
+                    .setPopupContent(`Client: ${id}`);
+            }
+
+            const bounds = L.latLngBounds(Object.values(clientMarkers).map(marker => marker.getLatLng()));
+            clientsMap.fitBounds(bounds);
+            boxesMap.fitBounds(bounds);
+
+            updateClientsList();
+        });
+
+        socket.on('box', (data) => {
+            const { id, latitude, longitude, type, details } = data;
+
+            if (!boxMarkers[id]) {
+                const marker = L.marker([latitude, longitude], { color: 'red' }).addTo(boxesMap)
+                    .bindPopup(`POI: ${id}<br>${details}`)
+                    .on('click', () => {
+                        socket.emit('box_removed', { id });
+                    });
+
+                boxMarkers[id] = { marker, type, details };
+                poiDetails[id] = details;
+            } else {
+                boxMarkers[id].marker.setLatLng([latitude, longitude])
+                    .setPopupContent(`POI: ${id}<br>${details}`);
+                poiDetails[id] = details;
+            }
+
+            const bounds = L.latLngBounds(Object.values(boxMarkers).map(markerObj => markerObj.marker.getLatLng()));
+            boxesMap.fitBounds(bounds);
+
+            updateBoxesList();
+        });
+
+        socket.on('client_disconnect', (data) => {
+            const { id } = data;
+            if (clientMarkers[id]) {
+                clientMarkers[id].remove();
+                delete clientMarkers[id];
+                updateClientsList();
+            }
+        });
+
+        socket.on('box_removed', (data) => {
+            const { id } = data;
+            if (boxMarkers[id]) {
+                boxMarkers[id].marker.remove();
+                delete boxMarkers[id];
+                updateBoxesList();
+            }
+        });
+
+        socket.on('entry', (data) => {
+            const { clientId, poiId } = data;
+            clientEntryTimes[`${clientId}-${poiId}`] = Date.now();
+        });
+
+        socket.on('time_update', (data) => {
+            const { clientId, poiId, duration } = data;
+            const timeList = document.getElementById('time-list');
+            const li = document.createElement('li');
+            li.textContent = `Cliente: ${clientId} - POI: ${poiId} - Tempo: ${duration.toFixed(2)} segundos`;
+            timeList.appendChild(li);
+        });
+        
+
+        boxesMap.on('click', function(e) {
+            const latitude = e.latlng.lat;
+            const longitude = e.latlng.lng;
+            const id = `poi-${Date.now()}`;
+            const details = prompt('Digite detalhes do POI (promoção, desconto, etc.):');
+
+            if (details) {
+                const marker = L.marker([latitude, longitude], { color: 'red' }).addTo(boxesMap)
+                    .bindPopup(`POI: ${id}<br>${details}`)
+                    .on('click', () => {
+                        socket.emit('box_removed', { id });
+                    });
+
+                boxMarkers[id] = { marker, type: 'poi', details };
+                poiDetails[id] = details;
+                socket.emit('box', { id, latitude, longitude, type: 'poi', details });
+            }
+        });
+
+        function updateClientsList() {
+            const clientsList = document.getElementById('clients-list');
+            clientsList.innerHTML = '';
+            for (const id in clientMarkers) {
+                const li = document.createElement('li');
+                li.textContent = `Client: ${id}`;
+                clientsList.appendChild(li);
+            }
+        }
+
+        function updateBoxesList() {
+            const boxesList = document.getElementById('boxes-list');
+            boxesList.innerHTML = '';
+            for (const id in boxMarkers) {
+                const li = document.createElement('li');
+                li.textContent = `POI: ${id} - ${poiDetails[id]}`;
+                boxesList.appendChild(li);
+            }
+        }
+    </script>
+</body>
+</html>

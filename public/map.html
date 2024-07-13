@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dual Maps</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { margin: 0; }
+        #map-container {
+            display: flex;
+            height: 100vh;
+        }
+        .map {
+            flex: 1;
+            height: 100%;
+            margin: 5px; /* Adiciona margem aos mapas */
+        }
+        .map-title {
+            text-align: center;
+            font-weight: bold;
+            margin-bottom: 10px; /* Margem inferior para título */
+        }
+    </style>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head>
+<body>
+    <div id="map-container">
+        <div class="map" id="clients-map">
+            <div class="map-title">Clientes Conectados</div>
+        </div>
+        <div class="map" id="boxes-map">
+            <div class="map-title">Caixas Clicáveis</div>
+        </div>
+    </div>
+    
+    <script>
+        const socket = io();
+
+        // Inicializa os mapas com uma região fixa para facilitar a marcação
+        const initialLatLng = [51.505, -0.09]; // Latitude e longitude iniciais para o centro dos mapas
+        const zoomLevel = 13; // Nível de zoom inicial
+
+        // Mapas
+        const clientsMap = L.map('clients-map').setView(initialLatLng, zoomLevel);
+        const boxesMap = L.map('boxes-map').setView(initialLatLng, zoomLevel);
+
+        // Adiciona camadas de tile aos mapas
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(clientsMap);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(boxesMap);
+
+        const clientMarkers = {};
+        const boxMarkers = {};
+
+        // Atualiza o mapa de clientes
+        socket.on('location', (data) => {
+            const { id, latitude, longitude } = data;
+
+            if (!clientMarkers[id]) {
+                clientMarkers[id] = L.marker([latitude, longitude], { color: 'blue' }).addTo(clientsMap)
+                    .bindPopup(`Client: ${id}`);
+            } else {
+                clientMarkers[id].setLatLng([latitude, longitude])
+                    .setPopupContent(`Client: ${id}`);
+            }
+
+            // Ajusta o mapa de clientes e sincroniza com o mapa de caixas
+            const bounds = L.latLngBounds(Object.values(clientMarkers).map(marker => marker.getLatLng()));
+            clientsMap.fitBounds(bounds);
+            boxesMap.fitBounds(bounds); // Sincroniza a visualização do mapa de caixas com o de clientes
+        });
+
+        // Adiciona caixas ao mapa de caixas
+        socket.on('box', (data) => {
+            const { id, latitude, longitude } = data;
+
+            if (!boxMarkers[id]) {
+                boxMarkers[id] = L.marker([latitude, longitude], { color: 'red' }).addTo(boxesMap)
+                    .bindPopup(`Box: ${id}`)
+                    .on('click', () => {
+                        socket.emit('box_removed', { id }); // Notifica o servidor que a caixa foi clicada
+                    });
+            } else {
+                boxMarkers[id].setLatLng([latitude, longitude])
+                    .setPopupContent(`Box: ${id}`);
+            }
+
+            // Ajusta o mapa de caixas para mostrar todos os marcadores
+            const bounds = L.latLngBounds(Object.values(boxMarkers).map(marker => marker.getLatLng()));
+            boxesMap.fitBounds(bounds);
+        });
+
+        // Remove marcador de cliente quando ele se desconecta
+        socket.on('client_disconnect', (data) => {
+            const { id } = data;
+            if (clientMarkers[id]) {
+                clientMarkers[id].remove(); // Remove o marcador do mapa
+                delete clientMarkers[id]; // Remove do armazenamento local
+            }
+        });
+
+        // Remove a caixa do mapa quando ela é removida
+        socket.on('box_removed', (data) => {
+            const { id } = data;
+            if (boxMarkers[id]) {
+                boxMarkers[id].remove(); // Remove a caixa do mapa
+                delete boxMarkers[id]; // Remove do armazenamento local
+            }
+        });
+
+        // Adiciona evento para marcar caixas manualmente
+        boxesMap.on('click', function(e) {
+            const latitude = e.latlng.lat;
+            const longitude = e.latlng.lng;
+            const id = `box-${Date.now()}`; // Gera um ID único para a nova caixa
+
+            // Adiciona a nova caixa ao mapa e envia para o servidor
+            const box = L.marker([latitude, longitude], { color: 'red' }).addTo(boxesMap)
+                .bindPopup(`Box: ${id}`)
+                .on('click', () => {
+                    socket.emit('box_removed', { id }); // Notifica o servidor que a caixa foi clicada
+                });
+
+            boxMarkers[id] = box; // Adiciona ao armazenamento local
+            socket.emit('box', { id, latitude, longitude }); // Envia para o servidor
+        });
+    </script>
+</body>
+</html>
